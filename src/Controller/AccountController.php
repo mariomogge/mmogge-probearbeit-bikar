@@ -4,77 +4,152 @@ namespace App\Controller;
 
 use App\Entity\Account;
 use App\Entity\Transaction;
+use App\Entity\User;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Annotation\Route;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Component\Security\Http\Attribute\CurrentUser;
+use Symfony\Component\Validator\Validator\ValidatorInterface;
 
 #[Route('/api/accounts')]
 class AccountController extends AbstractController
 {
-    #[Route('', methods: ['POST'])]
-    public function create(EntityManagerInterface $em): JsonResponse
+    private const STANDARD_CURRENCY = 'EUR';
+
+    public function __construct(private EntityManagerInterface $em) {}
+
+    private function assertOwner(Account $account, User $user): void
     {
-        $account = new Account();
-        $account->setOwner($this->getUser());
-        $em->persist($account);
-        $em->flush();
+        if ($account->getOwner()->getId() !== $user->getId()) {
+            throw $this->createAccessDeniedException('This is not your account.');
+        }
+    }
+
+    #[Route('', name: 'create_account', methods: ['POST'])]
+    public function create(#[CurrentUser] User $user): JsonResponse
+    {
+        $account = (new Account())->setOwner($user)->setBalanceEuros(0);
+        $this->em->persist($account);
+        $this->em->flush();
 
         return $this->json([
             'id' => $account->getId(),
-            'balance' => $account->getBalanceEuros()
+            'balance' => $account->getBalanceEuros(),
+            'currency' => self::STANDARD_CURRENCY
         ], 201);
     }
 
-    #[Route('/{id}/deposit', methods: ['POST'])]
-    public function deposit(int $id, Request $request, EntityManagerInterface $em): JsonResponse
+    #[Route('/{id</d+>', name: 'get_account', methods: ['GET'])]
+    public function getOne(int $id, #[CurrentUser] User $user): JsonResponse
     {
-        $account = $em->getRepository(Account::class)->find($id);
-        if (!$account || $account->getOwner() !== $this->getUser()) {
+        $account = $this->em->find(Account::class, $id);
+
+        if (!$account) {
+            return $this->json([
+                'error' => 'Account not found.'
+            ]. 404);
+        }
+
+        $this->assertOwner($account, $user);
+
+        return $this->json([
+            'id' => $account->getId(),
+            'balance' => $account->getBalanceEuros(),
+            'currency' => self::STANDARD_CURRENCY
+        ]);
+    }
+
+    #[Route('{id<\d+>}/transactions', name: 'get_transactions', methods: ['GET'])]
+    public function transactions(int $id, #[CurrentUser] User $user): JsonResponse
+    {
+        $account = $this->em->find(Account::class, $id);
+
+        if (!$account) {
+            return $this->json(['error' => 'Account not found.']);
+        }
+
+        $this->assertOwner($account, $user);
+
+        $transactions = $this->em->getRepository(Transaction::class)->findBy(
+            ['account' => $account],
+            ['createdAt' => 'DESC', 'id' =>'DESC'],
+            100
+        );
+
+        return $this->json(array_map(fn(Transaction $trans) => [
+            'id' => $trans->getId(),
+            'type' => $trans->getType(),
+            'amount' => $trans->getAmountEuros(),
+            'balanceAfter' => $trans->getBalanceAfterEuros(),
+            'createdAt' => $trans->getCreatedAt()->format(DATE_ATOM)
+        ], $transactions));
+    }
+
+    #[Route('/{id<\d+>}/deposit', name: 'account_deposit', methods: ['POST'])]
+    public function deposit(int $id, Request $request, #[CurrentUser] User $user): JsonResponse
+    {
+        $account = $this->em->getRepository(Account::class)->find($id);
+
+        if (!$account) {
             return $this->json(['error' => 'Not found'], 404);
         }
 
+        $this->assertOwner($account, $user);
+
         $data = json_decode($request->getContent(), true);
-        $amount = (float)$data['amount'];
-        $account->setBalanceEuros(bcadd($account->getBalanceEuros(), (string)$amount, 2));
+        $amount = $data['amount'];
+        
+        $account->deposit($amount);
 
         $transaction = (new Transaction())
             ->setAccount($account)
             ->setType('deposit')
-            ->setAmountEuros((string)$amount);
+            ->setAmountEuros((string)$amount)
+            ->setBalanceAfterEuros($account->getBalanceEuros());
 
-        $em->persist($transaction);
-        $em->flush();
+        $this->em->persist($transaction);
+        $this->em->flush();
 
-        return $this->json(['balance' => $account->getBalanceEuros()], 201);
+        return $this->json([
+            'balance' => $account->getBalanceEuros(),
+            'transactionId' => $transaction->getId()
+        ], 201);
     }
 
-    #[Route('/{id}/withdraw', methods: ['POST'])]
-    public function withdraw(int $id, Request $request, EntityManagerInterface $em): JsonResponse
+    #[Route('/{id<\d+>}/withdraw', name: 'account_withdraw', methods: ['POST'])]
+    public function withdraw(int $id, Request $request, #[CurrentUser] User $user): JsonResponse
     {
-        $account = $em->getRepository(Account::class)->find($id);
-        if (!$account || $account->getOwner() !== $this->getUser()) {
+        $account = $this->em->getRepository(Account::class)->find($id);
+
+        if (!$account) {
             return $this->json(['error' => 'Not found'], 404);
         }
 
-        $data = json_decode($request->getContent(), true);
-        $amount = (float)$data['amount'];
+        $this->assertOwner($account, $user);
 
-        if ($amount > (float)$account->getBalanceEuros()) {
+        $data = json_decode($request->getContent(), true);
+        $amount = $data['amount'];
+
+        try {
+            $account->withdraw($amount);
+        } catch (\DomainException $e) {
             return $this->json(['error' => 'Insufficient funds'], 409);
         }
-
-        $account->setBalanceEuros(bcsub($account->getBalanceEuros(), (string)$amount, 2));
 
         $transaction = (new Transaction())
             ->setAccount($account)
             ->setType('withdraw')
-            ->setAmountEuros((string)$amount);
+            ->setAmountEuros((string)$amount)
+            ->setBalanceAfterEuros($account->getBalanceEuros());
 
-        $em->persist($transaction);
-        $em->flush();
+        $this->em->persist($transaction);
+        $this->em->flush();
 
-        return $this->json(['balance' => $account->getBalanceEuros()], 201);
+        return $this->json([
+            'balance' => $account->getBalanceEuros(),
+            'transactionId' => $transaction->getId()
+        ], 201);
     }
 }
