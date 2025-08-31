@@ -15,3 +15,6 @@ migrate: ## Run migrations
 
 keys: ## Generate JWT keypair
 	docker compose exec php php bin/console lexik:jwt:generate-keypair --overwrite
+
+tests:
+	docker compose exec php vendor/bin/phpunit
