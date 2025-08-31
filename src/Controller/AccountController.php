@@ -1,155 +1,151 @@
 <?php
 
-namespace App\Controller;
+namespace App\Controller\Api;
 
-use App\Entity\Account;
-use App\Entity\Transaction;
-use App\Entity\User;
-use Doctrine\ORM\EntityManagerInterface;
+use App\Application\DTO\{CreateAccountRequest, DepositRequest, WithdrawRequest};
+use App\Application\Security\AccountVoter;
+use App\Application\Service\AccountService;
+use App\Domain\Account\{Account, Money};
+use App\Domain\User\User;
+use App\Infrastructure\Repository\{AccountRepository, TransactionRepository};
+use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
-use Symfony\Component\Routing\Annotation\Route;
-use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Security\Http\Attribute\CurrentUser;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
 
+
 #[Route('/api/accounts')]
-class AccountController extends AbstractController
+final class AccountController extends AbstractController
 {
-    private const STANDARD_CURRENCY = 'EUR';
+    public function __construct(
+        private readonly AccountService $service,
+        private readonly AccountRepository $accounts,
+        private readonly TransactionRepository $transactions
+    ) {}
 
-    public function __construct(private EntityManagerInterface $em) {}
-
-    private function assertOwner(Account $account, User $user): void
+    /**
+     * Route for opening new account
+     * 
+     * @param Request $request
+     * @param User $user // #[CurrentUser]
+     * @param ValidatorInterface $validator
+     * 
+     * @return JsonResponse
+     */
+    #[Route('', methods: ['POST'])]
+    public function open(Request $request, #[CurrentUser] User $user, ValidatorInterface $validator): JsonResponse
     {
-        if ($account->getOwner()->getId() !== $user->getId()) {
-            throw $this->createAccessDeniedException('This is not your account.');
-        }
-    }
-
-    #[Route('', name: 'create_account', methods: ['POST'])]
-    public function create(#[CurrentUser] User $user): JsonResponse
-    {
-        $account = (new Account())->setOwner($user)->setBalanceEuros(0);
-        $this->em->persist($account);
-        $this->em->flush();
-
-        return $this->json([
-            'id' => $account->getId(),
-            'balance' => $account->getBalanceEuros(),
-            'currency' => self::STANDARD_CURRENCY
-        ], 201);
-    }
-
-    #[Route('/{id</d+>', name: 'get_account', methods: ['GET'])]
-    public function getOne(int $id, #[CurrentUser] User $user): JsonResponse
-    {
-        $account = $this->em->find(Account::class, $id);
-
-        if (!$account) {
-            return $this->json([
-                'error' => 'Account not found.'
-            ]. 404);
+        $data = json_decode($request->getContent(), true) ?? [];
+        $dto = new CreateAccountRequest($data['initialDepositCents'] ?? null);
+        $errors = $validator->validate($dto);
+        if (count($errors)) {
+            return $this->json(['errors' => (string) $errors], 400);
         }
 
-        $this->assertOwner($account, $user);
 
+        $initial = $dto->initialDepositCents ? new Money($dto->initialDepositCents) : null;
+        $account = $this->service->openAccount($user, $initial);
+        return $this->json(['id' => $account->getId(), 'balanceCents' => $account->getBalance()->cents], 201);
+    }
+
+    /**
+     * Show account details
+     * 
+     * @param string $id
+     * @param User $user // #[CurrentUser]
+     * 
+     * @return JsonResponse
+     */
+    #[Route('/{id}', methods: ['GET'])]
+    public function show(string $id, #[CurrentUser] User $user): JsonResponse
+    {
+        $account = $this->accounts->find($id) ?? throw $this->createNotFoundException();
+        $this->denyAccessUnlessGranted(AccountVoter::VIEW, $account);
         return $this->json([
             'id' => $account->getId(),
-            'balance' => $account->getBalanceEuros(),
-            'currency' => self::STANDARD_CURRENCY
+            'balanceCents' => $account->getBalance()->cents,
         ]);
     }
 
-    #[Route('{id<\d+>}/transactions', name: 'get_transactions', methods: ['GET'])]
-    public function transactions(int $id, #[CurrentUser] User $user): JsonResponse
+    /**
+     * Show transactions by account user
+     * 
+     * @param string $id
+     * @param User $user // #[CurrentUser]
+     * @param Request $request
+     * 
+     * @return JsonResponse
+     */
+    #[Route('/{id}/transactions', methods: ['GET'])]
+    public function transactions(string $id, #[CurrentUser] User $user, Request $request): JsonResponse
     {
-        $account = $this->em->find(Account::class, $id);
-
-        if (!$account) {
-            return $this->json(['error' => 'Account not found.']);
-        }
-
-        $this->assertOwner($account, $user);
-
-        $transactions = $this->em->getRepository(Transaction::class)->findBy(
-            ['account' => $account],
-            ['createdAt' => 'DESC', 'id' =>'DESC'],
-            100
-        );
-
-        return $this->json(array_map(fn(Transaction $trans) => [
-            'id' => $trans->getId(),
-            'type' => $trans->getType(),
-            'amount' => $trans->getAmountEuros(),
-            'balanceAfter' => $trans->getBalanceAfterEuros(),
-            'createdAt' => $trans->getCreatedAt()->format(DATE_ATOM)
-        ], $transactions));
+        $account = $this->accounts->find($id) ?? throw $this->createNotFoundException();
+        $this->denyAccessUnlessGranted(AccountVoter::VIEW, $account);
+        $limit = (int)($request->query->get('limit', 50));
+        $offset = (int)($request->query->get('offset', 0));
+        $txs = $this->transactions->findForAccount($account, $limit, $offset);
+        return $this->json(array_map(fn($t) => [
+            'id' => $t->id ?? null, // keep DTO simple; or expose via getters in entity
+        ], $txs));
     }
 
-    #[Route('/{id<\d+>}/deposit', name: 'account_deposit', methods: ['POST'])]
-    public function deposit(int $id, Request $request, #[CurrentUser] User $user): JsonResponse
+    /**
+     * Deposit money amount by account user on user account
+     * 
+     * @param string $id
+     * @param Request $request
+     * @param User $user // #[CurrentUser]
+     * @param ValidatorInterface $validator
+     * 
+     * @return JsonResponse
+     */
+    #[Route('/{id}/deposit', methods: ['POST'])]
+    public function deposit(string $id, Request $request, #[CurrentUser] User $user, ValidatorInterface $validator): JsonResponse
     {
-        $account = $this->em->getRepository(Account::class)->find($id);
+        $account = $this->accounts->find($id) ?? throw $this->createNotFoundException();
+        $this->denyAccessUnlessGranted(AccountVoter::OPERATE, $account);
 
-        if (!$account) {
-            return $this->json(['error' => 'Not found'], 404);
+
+        $data = json_decode($request->getContent(), true) ?? [];
+        $dto = new DepositRequest($data['amountCents'] ?? null);
+        $errors = $validator->validate($dto);
+        if (count($errors)) {
+            return $this->json(['errors' => (string) $errors], 400);
         }
 
-        $this->assertOwner($account, $user);
 
-        $data = json_decode($request->getContent(), true);
-        $amount = $data['amount'];
-        
-        $account->deposit($amount);
-
-        $transaction = (new Transaction())
-            ->setAccount($account)
-            ->setType('deposit')
-            ->setAmountEuros((string)$amount)
-            ->setBalanceAfterEuros($account->getBalanceEuros());
-
-        $this->em->persist($transaction);
-        $this->em->flush();
-
-        return $this->json([
-            'balance' => $account->getBalanceEuros(),
-            'transactionId' => $transaction->getId()
-        ], 201);
+        $tx = $this->service->deposit($account, new Money($dto->amountCents));
+        return $this->json(['balanceCents' => $account->getBalance()->cents], 200);
     }
 
-    #[Route('/{id<\d+>}/withdraw', name: 'account_withdraw', methods: ['POST'])]
-    public function withdraw(int $id, Request $request, #[CurrentUser] User $user): JsonResponse
+    /**
+     * Withdraw money amount by account user on user account
+     * 
+     * @param string $id
+     * @param Request $request
+     * @param User $user // #[CurrentUser]
+     * @param ValidatorInterface $validator
+     * 
+     * @return JsonResponse
+     */
+    #[Route('/{id}/withdraw', methods: ['POST'])]
+    public function withdraw(string $id, Request $request, #[CurrentUser] User $user, ValidatorInterface $validator): JsonResponse
     {
-        $account = $this->em->getRepository(Account::class)->find($id);
+        $account = $this->accounts->find($id) ?? throw $this->createNotFoundException();
+        $this->denyAccessUnlessGranted(AccountVoter::OPERATE, $account);
 
-        if (!$account) {
-            return $this->json(['error' => 'Not found'], 404);
+
+        $data = json_decode($request->getContent(), true) ?? [];
+        $dto = new WithdrawRequest($data['amountCents'] ?? null);
+        $errors = $validator->validate($dto);
+        if (count($errors)) {
+            return $this->json(['errors' => (string) $errors], 400);
         }
 
-        $this->assertOwner($account, $user);
 
-        $data = json_decode($request->getContent(), true);
-        $amount = $data['amount'];
-
-        try {
-            $account->withdraw($amount);
-        } catch (\DomainException $e) {
-            return $this->json(['error' => 'Insufficient funds'], 409);
-        }
-
-        $transaction = (new Transaction())
-            ->setAccount($account)
-            ->setType('withdraw')
-            ->setAmountEuros((string)$amount)
-            ->setBalanceAfterEuros($account->getBalanceEuros());
-
-        $this->em->persist($transaction);
-        $this->em->flush();
-
-        return $this->json([
-            'balance' => $account->getBalanceEuros(),
-            'transactionId' => $transaction->getId()
-        ], 201);
+        $tx = $this->service->withdraw($account, new Money($dto->amountCents));
+        return $this->json(['balanceCents' => $account->getBalance()->cents], 200);
     }
 }
