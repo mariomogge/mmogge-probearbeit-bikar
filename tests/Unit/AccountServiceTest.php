@@ -9,6 +9,9 @@ use App\Infrastructure\Repository\{AccountRepository, TransactionRepository};
 use Doctrine\ORM\EntityManagerInterface;
 use PHPUnit\Framework\TestCase;
 
+// Unit tests for AccountService
+// Tests deposit, withdraw, overdraft forbidden
+// Infrastructure (EntityManager, Repo) are being mocked
 final class AccountServiceTest extends TestCase
 {
     public function testDepositAndWithdraw(): void
@@ -21,7 +24,7 @@ final class AccountServiceTest extends TestCase
             $this->createMock(TransactionRepository::class),
             $em
         );
-        $user = new User('john@example.com');
+        $user = new User('mario@notbikaryet.de');
         $acc = new Account($user);
 
 
@@ -44,7 +47,7 @@ final class AccountServiceTest extends TestCase
             $this->createMock(TransactionRepository::class),
             $em
         );
-        $user = new User('john@example.com');
+        $user = new User('mario@notbikaryet.de');
         $acc = new Account($user);
         $svc->withdraw($acc, new Money(1));
     }

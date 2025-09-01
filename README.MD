@@ -25,7 +25,7 @@ make keys # generate JWT keypair (uses $JWT_PASSPHRASE)
 make migrate # create DB schema
 make tests # run unit tests via PHPUnit
 ```
-Open http://localhost:8080
+Open http://localhost:8080 and see <a href="CURL_REQUESTS.MD">CURL_REQUESTS.MD</a> for example cURL requests
 
 ## CLI Commands (optional)
 - ``app:account:open <email> [initialCents]``

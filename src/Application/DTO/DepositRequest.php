@@ -4,6 +4,7 @@ namespace App\Application\DTO;
 
 use Symfony\Component\Validator\Constraints as Assert;
 
+// Explicit validation keeps controller slim and reusable
 final class DepositRequest
 {
     public function __construct(

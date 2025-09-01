@@ -6,6 +6,7 @@ use App\Domain\User\User;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\Persistence\ManagerRegistry;
 
+// Thin repository: type safety % autowiring, no business logic
 final class UserRepository extends ServiceEntityRepository
 {
     public function __construct(ManagerRegistry $registry)

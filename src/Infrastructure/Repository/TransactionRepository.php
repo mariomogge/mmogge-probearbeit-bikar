@@ -6,13 +6,13 @@ use App\Domain\Account\{Account, Transaction};
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\Persistence\ManagerRegistry;
 
+// Transaction repository providing paging via limit and offset
 final class TransactionRepository extends ServiceEntityRepository
 {
     public function __construct(ManagerRegistry $registry)
     {
         parent::__construct($registry, Transaction::class);
     }
-
 
     /** @return Transaction[] */
     public function findForAccount(Account $account, int $limit = 100, int $offset = 0): array

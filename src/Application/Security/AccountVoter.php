@@ -7,6 +7,8 @@ use App\Domain\User\User;
 use Symfony\Component\Security\Core\Authentication\Token\TokenInterface;
 use Symfony\Component\Security\Core\Authorization\Voter\Voter;
 
+// Voter checks whether current user is owner of an account
+// Restricts access to accounts owners only
 final class AccountVoter extends Voter
 {
     public const VIEW = 'ACCOUNT_VIEW';

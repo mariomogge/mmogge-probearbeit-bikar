@@ -15,7 +15,8 @@ use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Security\Http\Attribute\CurrentUser;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
 
-
+// REST controller for account operations.
+// Uses DTOs for input validation and calls AccountService
 #[Route('/api/accounts')]
 final class AccountController extends AbstractController
 {

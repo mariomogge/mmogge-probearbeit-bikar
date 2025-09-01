@@ -3,13 +3,13 @@
 ```bash
 curl -X POST http://localhost:8080/api/register \
   -H 'Content-Type: application/json' \
-  -d '{"email":"alice@example.com","password":"Str0ngP@ss!"}'
+  -d '{"email":"mario@notbikaryet.de","password":"Str0ngP@ss!"}'
 ```
 ## Login to get JWT
 ```bash
 curl -X POST http://localhost:8080/api/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"alice@example.com","password":"Str0ngP@ss!"}'
+  -d '{"email":"mario@notbikaryet.de","password":"Str0ngP@ss!"}'
 # => {"token":"<JWT>"}
 ```
 ## Create account with initial deposit (in cents)

@@ -7,6 +7,8 @@ use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpKernel\Event\ExceptionEvent;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
+// Converts exceptions to consistent JSON responses
+// DomainException -> 422, else 400 from HttpException
 #[AsEventListener(event: 'kernel.exception')]
 final class ExceptionSubscriber
 {

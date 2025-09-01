@@ -4,6 +4,7 @@ namespace App\Domain\Account;
 
 use App\Domain\User\User;
 
+// Allows Interface Driven Development (Dependency Inversion)
 interface AccountServiceInterface
 {
     public function openAccount(User $owner, ?Money $initialDeposit = null): Account;

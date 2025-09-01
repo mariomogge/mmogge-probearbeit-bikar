@@ -4,6 +4,8 @@ namespace App\Domain\Account;
 use Doctrine\ORM\Mapping as ORM;
 use Symfony\Component\Uid\Uuid;
 
+// Entity for transactions. 
+// Each transaction documents changes on an account.
 #[ORM\Entity(repositoryClass: \App\Infrastructure\Repository\TransactionRepository::class)]
 #[ORM\Table(name: 'transactions')]
 class Transaction
@@ -37,4 +39,6 @@ class Transaction
         $this->balanceAfterCents = $balanceAfter->cents;
         $this->createdAt = new \DateTimeImmutable();
     }
+
+    // getters can be added to create DTOs
 }
